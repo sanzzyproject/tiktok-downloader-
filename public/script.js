@@ -1,6 +1,6 @@
 let currentSlides = [];
 let currentSlideIndex = 0;
-let currentUsername = 'tiktok_user'; // Default filename prefix
+let currentUsername = 'tiktok_user'; 
 
 async function fetchData() {
     const url = document.getElementById('urlInput').value;
@@ -23,7 +23,7 @@ async function fetchData() {
 
         if (data.error) throw new Error(data.error);
 
-        // Populate Data
+        // Populate Data UI
         currentUsername = data.username || 'tiktok_user';
         document.getElementById('resUsername').textContent = `@${data.username}`;
         document.getElementById('resViews').textContent = data.views;
@@ -40,25 +40,27 @@ async function fetchData() {
             const videoUrl = data.downloads.nowm[0] || data.downloads.wm[0];
             const audioUrl = data.mp3[0];
             
+            // Set Preview Video
             document.getElementById('videoPlayer').src = videoUrl;
             
-            // LOGIKA BARU: Direct Download Video
+            // --- LOGIKA TOMBOL VIDEO (Auto Download) ---
             const btnVideo = document.getElementById('btnVideoNowm');
-            // Hapus href agar tidak membuka tab baru
+            // Hapus href default agar tidak membuka tab
             btnVideo.removeAttribute('href');
+            // Override klik dengan fungsi download paksa
             btnVideo.onclick = (e) => {
                 e.preventDefault();
-                downloadFile(videoUrl, `${currentUsername}_video.mp4`, btnVideo);
+                forceDownload(videoUrl, `${currentUsername}_video.mp4`, btnVideo);
             };
             
+            // --- LOGIKA TOMBOL AUDIO (Auto Download & Fix Access Denied) ---
             const btnAudio = document.getElementById('btnAudio');
             if(audioUrl) {
                 btnAudio.style.display = 'block';
-                // Hapus href agar tidak membuka tab baru
                 btnAudio.removeAttribute('href');
                 btnAudio.onclick = (e) => {
                     e.preventDefault();
-                    downloadFile(audioUrl, `${currentUsername}_audio.mp3`, btnAudio);
+                    forceDownload(audioUrl, `${currentUsername}_audio.mp3`, btnAudio);
                 };
             } else {
                 btnAudio.style.display = 'none';
@@ -77,34 +79,43 @@ async function fetchData() {
     }
 }
 
-// --- FUNGSI UTAMA DIRECT DOWNLOAD ---
-async function downloadFile(url, filename, btnElement = null) {
+/**
+ * FUNGSI INTI: Force Download & Bypass Access Denied
+ * Menggunakan referrerPolicy: 'no-referrer' untuk menghindari Error 403 TikTok
+ */
+async function forceDownload(url, filename, btnElement = null) {
     let originalText = '';
     
-    // Efek visual loading pada tombol (opsional)
+    // Efek visual pada tombol saat proses download berjalan
     if(btnElement) {
         originalText = btnElement.innerText;
-        btnElement.innerText = "Downloading...";
+        btnElement.innerText = "Downloading... (Please Wait)";
         btnElement.style.opacity = "0.7";
         btnElement.style.pointerEvents = "none";
     }
 
     try {
-        // Fetch file sebagai BLOB (Binary Large Object)
-        const response = await fetch(url);
+        // Fetch file sebagai BLOB. 
+        // PENTING: referrerPolicy: 'no-referrer' mencegah browser mengirim header Referer
+        // yang menyebabkan "Access Denied" pada link TikTok.
+        const response = await fetch(url, { 
+            referrerPolicy: 'no-referrer' 
+        });
+
         if (!response.ok) throw new Error('Network response was not ok');
         
         const blob = await response.blob();
         
-        // Membuat link download sementara di memori browser
+        // Buat URL lokal di browser
         const blobUrl = window.URL.createObjectURL(blob);
+        
+        // Buat elemen <a> virtual untuk men-trigger download
         const link = document.createElement('a');
         link.href = blobUrl;
-        link.download = filename; // Ini yang memaksa file terdownload otomatis
+        link.download = filename; // Atribut ini memaksa file tersimpan
         
-        // Eksekusi klik sembunyi
         document.body.appendChild(link);
-        link.click();
+        link.click(); // Klik otomatis
         
         // Bersihkan memori
         document.body.removeChild(link);
@@ -112,7 +123,8 @@ async function downloadFile(url, filename, btnElement = null) {
 
     } catch (error) {
         console.error('Download failed:', error);
-        // Fallback: Jika fetch gagal (karena CORS), buka di tab baru (opsi terakhir)
+        alert("Gagal download otomatis. Mengalihkan ke tab baru...");
+        // Fallback terakhir: buka tab baru jika fetch benar-benar diblokir browser
         window.open(url, '_blank');
     } finally {
         // Kembalikan tombol ke kondisi semula
@@ -140,17 +152,20 @@ function setupSlider(slides) {
 
     updateSlideUI();
     
-    // Update tombol "Download All (Zip)" 
-    // Catatan: Tanpa library tambahan (JSZip), kita mendownload satu per satu secara berurutan
+    // Tombol Download All (Looping Download)
     const downloadAllBtn = document.getElementById('downloadAllBtn');
     downloadAllBtn.onclick = async () => {
-        downloadAllBtn.innerText = "Processing...";
+        const originalText = downloadAllBtn.innerText;
+        downloadAllBtn.innerText = "Downloading all photos...";
+        
         for (let i = 0; i < currentSlides.length; i++) {
-            // Beri jeda sedikit agar browser tidak memblokir multiple download
-            await new Promise(r => setTimeout(r, 500));
-            downloadFile(currentSlides[i].url, `${currentUsername}_slide_${i+1}.jpg`);
+            // Beri jeda 1 detik per foto agar browser tidak nge-freeze
+            await new Promise(r => setTimeout(r, 1000));
+            // Panggil fungsi download yang sama (tanpa tombol loading visual per foto)
+            await forceDownload(currentSlides[i].url, `${currentUsername}_slide_${i+1}.jpg`);
         }
-        downloadAllBtn.innerText = "Download All Photos (Zip)";
+        
+        downloadAllBtn.innerText = originalText;
     };
 }
 
@@ -171,12 +186,13 @@ function updateSlideUI() {
     track.style.transform = `translateX(-${currentSlideIndex * 100}%)`;
     counter.textContent = `${currentSlideIndex + 1} / ${currentSlides.length}`;
 
-    // Update tombol download untuk slide aktif saat ini
+    // Update tombol download untuk foto yang sedang aktif
     const currentUrl = currentSlides[currentSlideIndex].url;
     const btn = document.getElementById('btnDownloadCurrentSlide');
     
-    // Gunakan fungsi downloadFile, bukan window.open
+    // Reset event listener lama agar tidak menumpuk
+    btn.onclick = null;
     btn.onclick = () => {
-        downloadFile(currentUrl, `${currentUsername}_slide_${currentSlideIndex + 1}.jpg`, btn);
+        forceDownload(currentUrl, `${currentUsername}_slide_${currentSlideIndex + 1}.jpg`, btn);
     };
 }
